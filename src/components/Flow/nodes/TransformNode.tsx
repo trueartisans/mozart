@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { Handle, NodeProps, Position, useReactFlow } from 'reactflow';
 import { CodeBracketIcon, CubeTransparentIcon, MinusIcon, PlusIcon } from '@heroicons/react/24/solid';
 import { TransformNodeData, TransformResult, HeadersType } from '@/types/flow';
@@ -22,8 +22,35 @@ return {
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [fileUploaded, setFileUploaded] = useState(false);
+  const [fileName, setFileName] = useState('');
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { setNodes, getEdges } = useReactFlow();
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setFileName(file.name);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const content = e.target?.result as string;
+        setCode(content);
+        setFileUploaded(true);
+      } catch (error) {
+        if (error instanceof Error) {
+          setError(`Error reading file: ${error.message}`);
+        } else {
+          setError('Error reading file');
+        }
+      }
+    };
+    reader.readAsText(file);
+  };
 
   const handleTransform = useCallback(async () => {
     try {
@@ -224,6 +251,36 @@ return {
               </div>
             )}
 
+            {/* File upload button */}
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center">
+                <button
+                  onClick={() => setShowUploadModal(true)}
+                  className="flex items-center text-xs bg-[#242424] hover:bg-[#333333] text-[#F5EFE0] px-2 py-1.5 rounded-md transition-colors border border-[#333333]"
+                >
+                  <svg className="h-3.5 w-3.5 mr-1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+                  </svg>
+                  Upload JS File
+                </button>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileUpload}
+                  accept=".js"
+                  className="hidden"
+                />
+              </div>
+              {fileUploaded && (
+                <div className="text-xs text-[#8B5CF6] flex items-center">
+                  <svg className="h-3.5 w-3.5 mr-1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/>
+                  </svg>
+                  {fileName}
+                </div>
+              )}
+            </div>
+
             <div className="relative">
               <div className="absolute top-0 right-0 bg-[#242424] text-[#F5EFE0]/50 text-xs px-2 py-1 rounded-bl-md border-b border-l border-[#333333]">
                 <CodeBracketIcon className="h-3 w-3 inline mr-1" />
@@ -281,6 +338,68 @@ return {
         </div>
       )}
 
+      {/* Modal explicativo */}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-[#1A1A1A] rounded-xl shadow-lg border border-[#2A2A2A] w-96 p-4">
+            <h3 className="text-[#F5EFE0] font-bold mb-3">Upload JavaScript File</h3>
+            <p className="text-[#F5EFE0]/80 text-sm mb-4">
+              Your JavaScript file must contain code that <span className="text-[#8B5CF6] font-semibold">returns a value</span>.
+              {mode === 'transform' ? ' The input data is available as the variable "data".' : ''}
+            </p>
+            <div className="bg-[#242424] p-3 rounded-md text-xs font-mono text-[#F5EFE0]/80 mb-4">
+              {mode === 'transform' ? (
+                <pre>{`// Transform the input data
+function transform(inputData) {
+  // Access the input data via the "data" variable
+  console.log("Processing:", inputData);
+  
+  // Return transformed data
+  return {
+    ...inputData,
+    processed: true,
+    timestamp: Date.now()
+  };
+}
+
+// Must include a return statement
+return transform(data);`}</pre>
+              ) : (
+                <pre>{`// Create new data
+function main() {
+  // Generate new data from scratch
+  return {
+    test: 123,
+    generated: true,
+    timestamp: Date.now()
+  };
+}
+
+// Must include a return statement
+return main();`}</pre>
+              )}
+            </div>
+            <div className="flex justify-end space-x-3">
+              <button
+                className="px-3 py-2 bg-[#333333] text-[#F5EFE0] rounded-md text-sm"
+                onClick={() => setShowUploadModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-3 py-2 bg-[#8B5CF6] text-white rounded-md text-sm"
+                onClick={() => {
+                  setShowUploadModal(false);
+                  fileInputRef.current?.click();
+                }}
+              >
+                Proceed to Upload
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Input handle - always visible to allow connection with Start */}
       <Handle
         type="target"
@@ -305,3 +424,5 @@ return {
     </div>
   );
 };
+
+export default TransformNode;

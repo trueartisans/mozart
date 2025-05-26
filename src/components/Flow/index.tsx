@@ -14,6 +14,7 @@ import ReactFlow, {
 import { FlowNode } from '@/types/flow';
 import 'reactflow/dist/style.css';
 import { GlobeAmericasIcon, CubeTransparentIcon, EyeIcon, PlayIcon } from '@heroicons/react/24/solid';
+import { debounce } from 'lodash';
 
 import RequestNode from './nodes/RequestNode';
 import ResponseNode from './nodes/ResponseNode';
@@ -51,6 +52,23 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [fitViewOnLoad, setFitViewOnLoad] = useState(true);
 
+  // TODO: Solve Any type
+  const debouncedSaveRef = useRef<any>(null);
+
+  useEffect(() => {
+    debouncedSaveRef.current = debounce((id: string, flowNodes: typeof nodes, flowEdges: typeof edges) => {
+      const flowData = JSON.stringify({ nodes: flowNodes, edges: flowEdges });
+      localStorage.setItem(`flow-${id}`, flowData);
+      console.log(`Flow ${id} saved to localStorage`);
+    }, 1000);
+
+    return () => {
+      if (debouncedSaveRef.current?.cancel) {
+        debouncedSaveRef.current.cancel();
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (flowId) {
       // TODO: Adapt a backend for this
@@ -82,9 +100,8 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   }, [flowId, setNodes, setEdges]);
 
   useEffect(() => {
-    if (flowId && flowId === flowInitialized) {
-      const flowData = JSON.stringify({ nodes, edges });
-      localStorage.setItem(`flow-${flowId}`, flowData);
+    if (flowId && flowId === flowInitialized && debouncedSaveRef.current) {
+      debouncedSaveRef.current(flowId, nodes, edges);
     }
   }, [flowId, flowInitialized, nodes, edges]);
 

@@ -48,7 +48,7 @@ Mozart is a visual API orchestrator, inspired by Postman Flows, but more robust 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/seu-usuario/mozart.git
+git clone https://github.com/trueartisans/mozart.git
 cd mozart
 ```
 

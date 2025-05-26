@@ -23,7 +23,6 @@ const Home: React.FC = () => {
     <div className="flex flex-col h-screen bg-[#121212]">
       <Navbar onJourneySelect={handleJourneySelect} />
 
-      {/* Flow title bar */}
       {selectedFlowName && (
         <div className="bg-[#0A2C2C] border-b border-[#2A2A2A] py-2 px-4 flex items-center justify-center">
           <h1 className="text-[#F5EFE0] font-medium text-lg flex items-center">
@@ -35,7 +34,7 @@ const Home: React.FC = () => {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar journeyId={selectedJourney} onFlowSelect={handleFlowSelect} />
         <div className="flex-1 overflow-hidden">
-          <Flow />
+          <Flow flowId={selectedFlow} />
         </div>
       </div>
     </div>

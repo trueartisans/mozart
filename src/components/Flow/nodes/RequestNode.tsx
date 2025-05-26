@@ -4,8 +4,8 @@ import axios from 'axios';
 import { GlobeAmericasIcon, MinusIcon, PlusIcon } from '@heroicons/react/24/solid';
 import { HttpMethod, HttpRequestConfig, RequestNodeData } from '@/types/flow';
 
-const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, isConnectable }) => {
-  const [url, setUrl] = useState('https://api.example.com');
+export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, isConnectable }) => {
+  const [url, setUrl] = useState('https://httpbin.org/ip');
   const [method, setMethod] = useState<HttpMethod>('GET');
   const [headers, setHeaders] = useState('{}');
   const [body, setBody] = useState('');
@@ -299,7 +299,7 @@ const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, isConnect
 
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <span className="text-[#F5EFE0]/50 sm:text-sm">{'{}'}</span>
+                <span className="text-[#F5EFE0]/50 sm:text-sm">{}</span>
               </div>
               <textarea
                 className={`block w-full pl-7 pr-3 py-2 text-sm border border-[#333333] rounded-md font-mono focus:ring-2 focus:ring-[#D5A253] focus:border-[#D5A253] bg-[#242424] text-[#F5EFE0] ${
@@ -469,5 +469,3 @@ const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, isConnect
     </div>
   );
 };
-
-export default RequestNode;

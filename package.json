@@ -15,6 +15,7 @@
     "@reactflow/background": "^11.3.14",
     "@reactflow/node-resizer": "^2.2.14",
     "axios": "^1.9.0",
+    "lodash": "^4.17.21",
     "mongodb": "^6.16.0",
     "next": "15.3.2",
     "react": "^19.0.0",
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
+    "@types/lodash": "^4.17.17",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

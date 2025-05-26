@@ -4,16 +4,17 @@ import ReactFlow, {
   Background,
   Connection,
   Controls,
-  Edge,
   MiniMap,
   Panel,
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  ReactFlowInstance
 } from 'reactflow';
 import { FlowNode } from '@/types/flow';
 import 'reactflow/dist/style.css';
 import { GlobeAmericasIcon, CubeTransparentIcon, EyeIcon, PlayIcon } from '@heroicons/react/24/solid';
+import { debounce } from 'lodash';
 
 import RequestNode from './nodes/RequestNode';
 import ResponseNode from './nodes/ResponseNode';
@@ -27,30 +28,83 @@ const nodeTypes = {
   start: StartNode,
 };
 
-const initialNodes: FlowNode[] = [];
-const initialEdges: Edge[] = [];
-
-// Options for fitView to avoid excessive zoom
 const fitViewOptions = {
   padding: 0.2,
   maxZoom: 1.5,
 };
 
-const FlowContent = () => {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+interface FlowProps {
+  flowId: string | null;
+}
+
+const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [contextMenu, setContextMenu] = useState<{
     visible: boolean;
     x: number;
     y: number;
     flowPosition: { x: number; y: number };
   } | null>(null);
+  const [flowInitialized, setFlowInitialized] = useState<string | null>(null);
 
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
-  const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
+  const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [fitViewOnLoad, setFitViewOnLoad] = useState(true);
 
-  // Disable fitView after the first render
+  // TODO: Solve Any type
+  const debouncedSaveRef = useRef<any>(null);
+
+  useEffect(() => {
+    debouncedSaveRef.current = debounce((id: string, flowNodes: typeof nodes, flowEdges: typeof edges) => {
+      const flowData = JSON.stringify({ nodes: flowNodes, edges: flowEdges });
+      localStorage.setItem(`flow-${id}`, flowData);
+      console.log(`Flow ${id} saved to localStorage`);
+    }, 1000);
+
+    return () => {
+      if (debouncedSaveRef.current?.cancel) {
+        debouncedSaveRef.current.cancel();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (flowId) {
+      // TODO: Adapt a backend for this
+      const savedFlow = localStorage.getItem(`flow-${flowId}`);
+
+      if (savedFlow) {
+        try {
+          const { nodes: savedNodes, edges: savedEdges } = JSON.parse(savedFlow);
+          setNodes(savedNodes);
+          setEdges(savedEdges);
+          setFitViewOnLoad(true);
+        } catch (error) {
+          console.error('Error loading flow data:', error);
+          setNodes([]);
+          setEdges([]);
+        }
+      } else {
+        setNodes([]);
+        setEdges([]);
+        localStorage.setItem(`flow-${flowId}`, JSON.stringify({ nodes: [], edges: [] }));
+      }
+
+      setFlowInitialized(flowId);
+    } else {
+      setNodes([]);
+      setEdges([]);
+      setFlowInitialized(null);
+    }
+  }, [flowId, setNodes, setEdges]);
+
+  useEffect(() => {
+    if (flowId && flowId === flowInitialized && debouncedSaveRef.current) {
+      debouncedSaveRef.current(flowId, nodes, edges);
+    }
+  }, [flowId, flowInitialized, nodes, edges]);
+
   useEffect(() => {
     if (nodes.length > 0) {
       setFitViewOnLoad(false);
@@ -64,6 +118,8 @@ const FlowContent = () => {
 
   const onAddNode = useCallback(
     (type: 'request' | 'response' | 'transform' | 'start', position?: { x: number; y: number }) => {
+      if (!flowId) return;
+
       const pos = position || { x: 250, y: 250 };
       const newNode: FlowNode = {
         id: `${type}-${Date.now()}`,
@@ -72,33 +128,29 @@ const FlowContent = () => {
         data: { label: `${type.charAt(0).toUpperCase() + type.slice(1)} Node` },
       };
       setNodes((nds) => nds.concat(newNode));
-      setContextMenu(null); // Close the menu after adding the node
+      setContextMenu(null);
     },
-    [setNodes]
+    [setNodes, flowId]
   );
 
-  // Right-click handler on the flow background
   const onContextMenu = useCallback(
     (event: React.MouseEvent) => {
-      // Prevent the default browser context menu
+      if (!flowId) return;
+
       event.preventDefault();
 
       if (!reactFlowWrapper.current || !reactFlowInstance) return;
 
-      // Get mouse position relative to the screen
       const x = event.clientX;
       const y = event.clientY;
 
-      // Get the position of the ReactFlow element
       const reactFlowBounds = reactFlowWrapper.current.getBoundingClientRect();
 
-      // Calculate the position relative to the ReactFlow element
       const position = reactFlowInstance.project({
         x: x - reactFlowBounds.left,
         y: y - reactFlowBounds.top,
       });
 
-      // Show the custom context menu
       setContextMenu({
         visible: true,
         x,
@@ -106,13 +158,30 @@ const FlowContent = () => {
         flowPosition: position,
       });
     },
-    [reactFlowInstance]
+    [reactFlowInstance, flowId]
   );
 
-  // Close the context menu when clicking anywhere
   const onPaneClick = useCallback(() => {
     setContextMenu(null);
   }, []);
+
+  if (!flowId) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-[#121212]">
+        <div className="text-center p-8 bg-[#0A2C2C] rounded-xl shadow-lg border border-[#2A2A2A] max-w-md">
+          <div className="bg-[#0A3B3B] p-4 rounded-full mx-auto mb-4 w-16 h-16 flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-[#D5A253]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-bold text-[#F5EFE0] mb-2">No Flow Selected</h2>
+          <p className="text-[#D5A253]/70 mb-6">
+            Select a flow from the sidebar or create a new one to start building your API orchestration.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full h-full bg-[#121212]" ref={reactFlowWrapper}>
@@ -157,7 +226,6 @@ const FlowContent = () => {
         />
         <Background gap={16} size={1} color="#2A2A2A" />
 
-        {/* Centered panel at the bottom */}
         <Panel position="bottom-center" className="flex justify-center items-center mb-4">
           <div className="bg-[#0A2C2C] p-2 rounded-lg shadow-md border border-[#2A2A2A] flex space-x-2">
             <button
@@ -191,7 +259,6 @@ const FlowContent = () => {
           </div>
         </Panel>
 
-        {/* Context menu */}
         {contextMenu?.visible && (
           <div
             className="fixed z-50 bg-[#0A2C2C] rounded-lg shadow-lg border border-[#2A2A2A] overflow-hidden"
@@ -237,11 +304,10 @@ const FlowContent = () => {
   );
 };
 
-// Wrapper component with ReactFlowProvider
-const Flow = () => {
+const Flow: React.FC<FlowProps> = ({ flowId }) => {
   return (
     <ReactFlowProvider>
-      <FlowContent />
+      <FlowContent flowId={flowId} />
     </ReactFlowProvider>
   );
 };

@@ -16,7 +16,7 @@ import 'reactflow/dist/style.css';
 import { GlobeAmericasIcon, CubeTransparentIcon, EyeIcon, PlayIcon } from '@heroicons/react/24/solid';
 import { debounce } from 'lodash';
 
-import RequestNode from './nodes/RequestNode';
+import { RequestNode } from './nodes/RequestNode';
 import ResponseNode from './nodes/ResponseNode';
 import { TransformNode } from './nodes/TransformNode';
 import StartNode from './nodes/StartNode';

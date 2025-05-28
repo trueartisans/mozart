@@ -19,13 +19,11 @@ import { debounce } from 'lodash';
 import { RequestNode } from './nodes/RequestNode';
 import ResponseNode from './nodes/ResponseNode';
 import { TransformNode } from './nodes/TransformNode';
-import StartNode from './nodes/StartNode';
 
 const nodeTypes = {
   request: RequestNode,
   response: ResponseNode,
   transform: TransformNode,
-  start: StartNode,
 };
 
 const fitViewOptions = {
@@ -47,6 +45,8 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
     flowPosition: { x: number; y: number };
   } | null>(null);
   const [flowInitialized, setFlowInitialized] = useState<string | null>(null);
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [executionError, setExecutionError] = useState<string | null>(null);
 
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
@@ -117,7 +117,7 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   );
 
   const onAddNode = useCallback(
-    (type: 'request' | 'response' | 'transform' | 'start', position?: { x: number; y: number }) => {
+    (type: 'request' | 'response' | 'transform', position?: { x: number; y: number }) => {
       if (!flowId) return;
 
       const pos = position || { x: 250, y: 250 };
@@ -164,6 +164,54 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   const onPaneClick = useCallback(() => {
     setContextMenu(null);
   }, []);
+
+  const executeFlow = useCallback(() => {
+    if (!flowId || nodes.length === 0) return;
+
+    setIsExecuting(true);
+    setExecutionError(null);
+
+    try {
+      const incomingConnections = new Set(edges.map(edge => edge.target));
+      const entryNodes = nodes.filter(node => !incomingConnections.has(node.id));
+
+      if (entryNodes.length === 0) {
+        setExecutionError("No entry nodes found to start execution");
+        setIsExecuting(false);
+        return;
+      }
+
+      const executionTimestamp = Date.now();
+
+      setNodes(nodes =>
+        nodes.map(node => {
+          if (entryNodes.some(entryNode => entryNode.id === node.id)) {
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                triggerExecution: executionTimestamp
+              }
+            };
+          }
+          return node;
+        })
+      );
+
+      setTimeout(() => {
+        setIsExecuting(false);
+      }, 500);
+
+    } catch (error) {
+      console.error("Error executing flow:", error);
+      if (error instanceof Error) {
+        setExecutionError(`Error executing flow: ${error.message}`);
+      } else {
+        setExecutionError("Unknown error executing flow");
+      }
+      setIsExecuting(false);
+    }
+  }, [flowId, nodes, edges, setNodes]);
 
   if (!flowId) {
     return (
@@ -217,8 +265,6 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
                 return '#10B981';
               case 'transform':
                 return '#8B5CF6';
-              case 'start':
-                return '#6366F1';
               default:
                 return '#64748B';
             }
@@ -226,15 +272,37 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
         />
         <Background gap={16} size={1} color="#2A2A2A" />
 
+        <Panel position="top-right" className="mr-4 mt-4">
+          <button
+            onClick={executeFlow}
+            disabled={isExecuting || nodes.length === 0}
+            className="flex items-center justify-center px-4 py-2 bg-gradient-to-r from-[#6366F1] to-[#4F46E5] text-white rounded-lg hover:from-[#818CF8] hover:to-[#6366F1] transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isExecuting ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Executing...
+              </>
+            ) : (
+              <>
+                <PlayIcon className="h-5 w-5 mr-2" />
+                Execute
+              </>
+            )}
+          </button>
+
+          {executionError && (
+            <div className="mt-2 p-2 bg-red-900/30 border border-red-800 rounded-md">
+              <p className="text-red-400 text-xs">{executionError}</p>
+            </div>
+          )}
+        </Panel>
+
         <Panel position="bottom-center" className="flex justify-center items-center mb-4">
           <div className="bg-[#0A2C2C] p-2 rounded-lg shadow-md border border-[#2A2A2A] flex space-x-2">
-            <button
-              onClick={() => onAddNode('start')}
-              className="flex items-center justify-center px-3 py-2 bg-gradient-to-r from-[#6366F1] to-[#4F46E5] text-white text-sm font-medium rounded-md hover:from-[#818CF8] hover:to-[#6366F1] transition-all shadow-sm"
-            >
-              <PlayIcon className="h-4 w-4 mr-1" />
-              Start
-            </button>
             <button
               onClick={() => onAddNode('request')}
               className="flex items-center justify-center px-3 py-2 bg-gradient-to-r from-[#D5A253] to-[#BF8A3D] text-[#0A3B3B] text-sm font-medium rounded-md hover:from-[#E6B978] hover:to-[#D5A253] transition-all shadow-sm"
@@ -268,13 +336,6 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
             }}
           >
             <div className="p-1">
-              <button
-                onClick={() => onAddNode('start', contextMenu.flowPosition)}
-                className="flex items-center w-full px-3 py-2 text-sm text-white hover:bg-[#6366F1]/20 rounded-md transition-colors"
-              >
-                <PlayIcon className="h-4 w-4 mr-2 text-[#6366F1]" />
-                Add Start
-              </button>
               <button
                 onClick={() => onAddNode('request', contextMenu.flowPosition)}
                 className="flex items-center w-full px-3 py-2 text-sm text-white hover:bg-[#D5A253]/20 rounded-md transition-colors"

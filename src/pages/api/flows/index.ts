@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { connectToDatabase } from '@/../lib/mongodb';
 import Flow from '@/models/Flow';
+import FlowDefinition from '@/models/FlowDefinition';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   await connectToDatabase();
@@ -28,7 +29,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
 
       // Create an empty flow definition
-      const FlowDefinition = require('../../../models/FlowDefinition').default;
       await FlowDefinition.create({
         flowId: flow._id,
         nodes: [],

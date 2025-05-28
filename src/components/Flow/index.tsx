@@ -15,6 +15,7 @@ import { FlowNode } from '@/types/flow';
 import 'reactflow/dist/style.css';
 import { GlobeAmericasIcon, CubeTransparentIcon, EyeIcon, PlayIcon } from '@heroicons/react/24/solid';
 import { debounce } from 'lodash';
+import axios from 'axios';
 
 import { RequestNode } from './nodes/RequestNode';
 import ResponseNode from './nodes/ResponseNode';
@@ -47,6 +48,8 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   const [flowInitialized, setFlowInitialized] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionError, setExecutionError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error' | null>(null);
 
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
@@ -55,11 +58,26 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   // TODO: Solve Any type
   const debouncedSaveRef = useRef<any>(null);
 
+  // Initialize a debounced save function
   useEffect(() => {
-    debouncedSaveRef.current = debounce((id: string, flowNodes: typeof nodes, flowEdges: typeof edges) => {
-      const flowData = JSON.stringify({ nodes: flowNodes, edges: flowEdges });
-      localStorage.setItem(`flow-${id}`, flowData);
-      console.log(`Flow ${id} saved to localStorage`);
+    debouncedSaveRef.current = debounce(async (id: string, flowNodes: typeof nodes, flowEdges: typeof edges) => {
+      try {
+        setSaveStatus('saving');
+        await axios.put(`/api/flow-definitions/${id}`, {
+          nodes: flowNodes,
+          edges: flowEdges,
+        });
+        console.log(`Flow ${id} saved to database`);
+        setSaveStatus('saved');
+
+        // Reset save status after a delay
+        setTimeout(() => {
+          setSaveStatus(null);
+        }, 500);
+      } catch (error) {
+        console.error('Error saving flow:', error);
+        setSaveStatus('error');
+      }
     }, 1000);
 
     return () => {
@@ -69,29 +87,58 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
     };
   }, []);
 
+  // Load flow data when flowId changes
   useEffect(() => {
     if (flowId) {
-      // TODO: Adapt a backend for this
-      const savedFlow = localStorage.getItem(`flow-${flowId}`);
-
-      if (savedFlow) {
+      const fetchFlowDefinition = async () => {
         try {
-          const { nodes: savedNodes, edges: savedEdges } = JSON.parse(savedFlow);
-          setNodes(savedNodes);
-          setEdges(savedEdges);
-          setFitViewOnLoad(true);
+          setIsLoading(true);
+          setExecutionError(null);
+
+          const response = await axios.get(`/api/flow-definitions/${flowId}`);
+          const { nodes: savedNodes, edges: savedEdges } = response.data;
+
+          if (savedNodes && savedEdges) {
+            setNodes(savedNodes);
+            setEdges(savedEdges);
+            setFitViewOnLoad(true);
+          } else {
+            setNodes([]);
+            setEdges([]);
+
+            // Create an empty flow definition if none exists
+            await axios.put(`/api/flow-definitions/${flowId}`, {
+              nodes: [],
+              edges: [],
+            });
+          }
         } catch (error) {
           console.error('Error loading flow data:', error);
           setNodes([]);
           setEdges([]);
-        }
-      } else {
-        setNodes([]);
-        setEdges([]);
-        localStorage.setItem(`flow-${flowId}`, JSON.stringify({ nodes: [], edges: [] }));
-      }
 
-      setFlowInitialized(flowId);
+          if (error instanceof Error) {
+            setExecutionError(`Error loading flow: ${error.message}`);
+          } else {
+            setExecutionError('Error loading flow data');
+          }
+
+          // Create an empty flow definition if none exists
+          try {
+            await axios.put(`/api/flow-definitions/${flowId}`, {
+              nodes: [],
+              edges: [],
+            });
+          } catch (createError) {
+            console.error('Error creating empty flow definition:', createError);
+          }
+        } finally {
+          setIsLoading(false);
+          setFlowInitialized(flowId);
+        }
+      };
+
+      fetchFlowDefinition();
     } else {
       setNodes([]);
       setEdges([]);
@@ -99,12 +146,14 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
     }
   }, [flowId, setNodes, setEdges]);
 
+  // Save flow data when nodes or edges change
   useEffect(() => {
-    if (flowId && flowId === flowInitialized && debouncedSaveRef.current) {
+    if (flowId && flowId === flowInitialized && debouncedSaveRef.current && (nodes.length > 0 || edges.length > 0)) {
       debouncedSaveRef.current(flowId, nodes, edges);
     }
   }, [flowId, flowInitialized, nodes, edges]);
 
+  // Reset fit view after nodes are loaded
   useEffect(() => {
     if (nodes.length > 0) {
       setFitViewOnLoad(false);
@@ -233,6 +282,18 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
 
   return (
     <div className="w-full h-full bg-[#121212]" ref={reactFlowWrapper}>
+      {isLoading && (
+        <div className="absolute inset-0 bg-[#121212]/80 flex items-center justify-center z-50">
+          <div className="bg-[#0A2C2C] p-6 rounded-xl shadow-lg border border-[#2A2A2A] flex flex-col items-center">
+            <svg className="animate-spin h-10 w-10 text-[#D5A253] mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p className="text-[#F5EFE0] text-lg">Loading flow...</p>
+          </div>
+        </div>
+      )}
+
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -272,10 +333,48 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
         />
         <Background gap={16} size={1} color="#2A2A2A" />
 
-        <Panel position="top-right" className="mr-4 mt-4">
+        {/* Panel para o indicador de salvamento centralizado no topo */}
+        <Panel position="top-center" className="mt-4">
+          {saveStatus && (
+            <div className={`px-3 py-1.5 rounded-md text-sm flex items-center shadow-md border ${
+              saveStatus === 'saving' ? 'bg-[#0A3B3B] text-[#D5A253] border-[#D5A253]/20' :
+                saveStatus === 'saved' ? 'bg-green-900/30 text-green-400 border-green-800/20' :
+                  'bg-red-900/30 text-red-400 border-red-800/20'
+            }`}>
+              {saveStatus === 'saving' && (
+                <>
+                  <svg className="animate-spin h-3 w-3 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Saving...
+                </>
+              )}
+              {saveStatus === 'saved' && (
+                <>
+                  <svg className="h-3 w-3 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  Flow saved
+                </>
+              )}
+              {saveStatus === 'error' && (
+                <>
+                  <svg className="h-3 w-3 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                  Error saving
+                </>
+              )}
+            </div>
+          )}
+        </Panel>
+
+        {/* Panel para o botão de execução e mensagens de erro no canto superior direito */}
+        <Panel position="top-right" className="mr-4 mt-4 flex flex-col items-end space-y-2">
           <button
             onClick={executeFlow}
-            disabled={isExecuting || nodes.length === 0}
+            disabled={isExecuting || nodes.length === 0 || isLoading}
             className="flex items-center justify-center px-4 py-2 bg-gradient-to-r from-[#6366F1] to-[#4F46E5] text-white rounded-lg hover:from-[#818CF8] hover:to-[#6366F1] transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isExecuting ? (
@@ -295,7 +394,7 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
           </button>
 
           {executionError && (
-            <div className="mt-2 p-2 bg-red-900/30 border border-red-800 rounded-md">
+            <div className="p-2 bg-red-900/30 border border-red-800 rounded-md">
               <p className="text-red-400 text-xs">{executionError}</p>
             </div>
           )}

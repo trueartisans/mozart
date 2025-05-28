@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { PlusIcon, CodeBracketIcon, ShieldExclamationIcon, DocumentTextIcon, MagnifyingGlassIcon, ClockIcon, ChevronRightIcon } from '@heroicons/react/24/solid';
+import React, { useState, useEffect } from 'react';
+import { PlusIcon, CodeBracketIcon, ShieldExclamationIcon, DocumentTextIcon, MagnifyingGlassIcon, ClockIcon, ChevronRightIcon, TrashIcon } from '@heroicons/react/24/solid';
+import axios from 'axios';
 
 type Flow = {
   id: string;
@@ -21,6 +22,48 @@ const Sidebar: React.FC<SidebarProps> = ({ journeyId, onFlowSelect }) => {
   const [hoveredFlow, setHoveredFlow] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch flows when journeyId changes
+  useEffect(() => {
+    const fetchFlows = async () => {
+      if (journeyId) {
+        try {
+          setIsLoading(true);
+          setError(null);
+          const response = await axios.get(`/api/flows?journeyId=${journeyId}`);
+          const flowData = response.data.map((flow: any) => ({
+            id: flow._id,
+            name: flow.name,
+            journeyId: flow.journeyId,
+            createdAt: new Date(flow.createdAt),
+          }));
+          setFlows(flowData);
+
+          // Auto-select the first flow if available and none selected
+          if (flowData.length > 0 && !selectedFlow) {
+            setSelectedFlow(flowData[0].id);
+            onFlowSelect(flowData[0].id, flowData[0].name);
+          } else if (flowData.length === 0) {
+            // Clear selection if no flows
+            setSelectedFlow(null);
+            onFlowSelect(null, null);
+          }
+        } catch (err) {
+          console.error('Failed to fetch flows:', err);
+          setError('Failed to load flows');
+        } finally {
+          setIsLoading(false);
+        }
+      } else {
+        setFlows([]);
+        setSelectedFlow(null);
+      }
+    };
+
+    fetchFlows();
+  }, [journeyId, onFlowSelect]);
 
   const filteredFlows = journeyId
     ? flows
@@ -33,21 +76,72 @@ const Sidebar: React.FC<SidebarProps> = ({ journeyId, onFlowSelect }) => {
     onFlowSelect(flowId, flowName);
   };
 
-  const handleAddFlow = () => {
+  const handleAddFlow = async () => {
     if (newFlowName.trim() && journeyId) {
-      const newFlow = {
-        id: `flow-${Date.now()}`,
-        name: newFlowName.trim(),
-        journeyId,
-        createdAt: new Date(),
-      };
-      setFlows([...flows, newFlow]);
-      setNewFlowName('');
-      setIsAddingFlow(false);
+      try {
+        setIsLoading(true);
+        setError(null);
 
-      // Automatically select the new flow
-      setSelectedFlow(newFlow.id);
-      onFlowSelect(newFlow.id, newFlow.name);
+        const response = await axios.post('/api/flows', {
+          journeyId,
+          name: newFlowName.trim(),
+          description: '',
+          position: flows.length,
+        });
+
+        const newFlow = response.data;
+        const updatedFlows = [...flows, {
+          id: newFlow._id,
+          name: newFlow.name,
+          journeyId,
+          createdAt: new Date(newFlow.createdAt),
+        }];
+
+        setFlows(updatedFlows);
+        setNewFlowName('');
+        setIsAddingFlow(false);
+
+        // Automatically select the new flow
+        setSelectedFlow(newFlow._id);
+        onFlowSelect(newFlow._id, newFlow.name);
+      } catch (err) {
+        console.error('Failed to create flow:', err);
+        setError('Failed to create flow');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  const handleDeleteFlow = async (flowId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent flow selection when clicking delete
+
+    if (confirm('Are you sure you want to delete this flow?')) {
+      try {
+        setIsLoading(true);
+        await axios.delete(`/api/flows/${flowId}`);
+
+        // Remove from state
+        const updatedFlows = flows.filter(flow => flow.id !== flowId);
+        setFlows(updatedFlows);
+
+        // If the deleted flow was selected, select another one or null
+        if (selectedFlow === flowId) {
+          const newSelectedFlow = updatedFlows.length > 0 ? updatedFlows[0] : null;
+          if (newSelectedFlow) {
+            setSelectedFlow(newSelectedFlow.id);
+            onFlowSelect(newSelectedFlow.id, newSelectedFlow.name);
+          } else {
+            setSelectedFlow(null);
+            onFlowSelect(null, null);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to delete flow:', err);
+        setError('Failed to delete flow');
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -79,6 +173,26 @@ const Sidebar: React.FC<SidebarProps> = ({ journeyId, onFlowSelect }) => {
         </div>
       </div>
 
+      {isLoading && (
+        <div className="p-3 flex justify-center">
+          <div className="text-[#D5A253]/70 text-sm flex items-center">
+            <svg className="animate-spin h-4 w-4 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Loading...
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="p-3">
+          <div className="text-red-400 text-sm bg-red-900/30 px-3 py-2 rounded-md">
+            {error}
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
         {filteredFlows.length === 0 && !searchTerm ? (
           <div className="flex flex-col items-center justify-center h-full text-center py-8 px-4">
@@ -92,6 +206,7 @@ const Sidebar: React.FC<SidebarProps> = ({ journeyId, onFlowSelect }) => {
             <button
               onClick={() => setIsAddingFlow(true)}
               className="flex items-center justify-center space-x-1 bg-[#D5A253] hover:bg-[#BF8A3D] text-[#0A3B3B] px-3 py-2 rounded-lg text-sm font-medium transition-colors shadow-md"
+              disabled={isLoading}
             >
               <PlusIcon className="h-4 w-4" />
               <span>Create Flow</span>
@@ -162,6 +277,17 @@ const Sidebar: React.FC<SidebarProps> = ({ journeyId, onFlowSelect }) => {
                         </span>
                       </div>
                     </div>
+
+                    {selectedFlow === flow.id && (
+                      <button
+                        onClick={(e) => handleDeleteFlow(flow.id, e)}
+                        className="p-1.5 text-[#D5A253]/70 hover:text-[#D5A253] hover:bg-[#0A3B3B]/50 rounded-md transition-colors"
+                        title="Delete flow"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                      </button>
+                    )}
+
                     <ChevronRightIcon className={`h-4 w-4 ${selectedFlow === flow.id ? 'text-[#D5A253]' : 'text-[#D5A253]/0 group-hover:text-[#D5A253]/50'} transition-all`} />
 
                     {/* Tooltip for long names */}
@@ -190,17 +316,22 @@ const Sidebar: React.FC<SidebarProps> = ({ journeyId, onFlowSelect }) => {
               onChange={(e) => setNewFlowName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAddFlow()}
               autoFocus
+              disabled={isLoading}
             />
             <div className="flex space-x-2">
               <button
-                className="flex-1 bg-[#D5A253] hover:bg-[#BF8A3D] text-[#0A3B3B] px-3 py-2.5 rounded-lg text-sm font-medium transition-colors shadow-sm"
+                className={`flex-1 bg-[#D5A253] hover:bg-[#BF8A3D] text-[#0A3B3B] px-3 py-2.5 rounded-lg text-sm font-medium transition-colors shadow-sm ${
+                  isLoading ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
                 onClick={handleAddFlow}
+                disabled={isLoading}
               >
                 Add
               </button>
               <button
                 className="flex-1 bg-[#0A3B3B] hover:bg-[#0F4D4D] text-[#F5EFE0] px-3 py-2.5 rounded-lg text-sm font-medium transition-colors border border-[#2A2A2A] shadow-sm"
                 onClick={() => setIsAddingFlow(false)}
+                disabled={isLoading}
               >
                 Cancel
               </button>
@@ -208,8 +339,11 @@ const Sidebar: React.FC<SidebarProps> = ({ journeyId, onFlowSelect }) => {
           </div>
         ) : (
           <button
-            className="w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-[#D5A253] to-[#BF8A3D] hover:from-[#E6B978] hover:to-[#D5A253] text-[#0A3B3B] px-3 py-3 rounded-lg text-sm font-medium transition-colors shadow-md"
+            className={`w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-[#D5A253] to-[#BF8A3D] hover:from-[#E6B978] hover:to-[#D5A253] text-[#0A3B3B] px-3 py-3 rounded-lg text-sm font-medium transition-colors shadow-md ${
+              isLoading ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
             onClick={() => setIsAddingFlow(true)}
+            disabled={isLoading}
           >
             <PlusIcon className="h-4 w-4" />
             <span>New Flow</span>

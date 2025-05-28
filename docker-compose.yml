@@ -1,0 +1,51 @@
+services:
+  mozart:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mozart-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://mongodb:27017/mozart
+    depends_on:
+      - mongodb
+    networks:
+      - mozart-network
+
+  mongodb:
+    image: mongo:latest
+    container_name: mozart-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - mozart-network
+    command: mongod --quiet --logpath /dev/null
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: mozart-mongo-express
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongodb
+      - ME_CONFIG_MONGODB_PORT=27017
+      - ME_CONFIG_BASICAUTH_USERNAME=admin
+      - ME_CONFIG_BASICAUTH_PASSWORD=password
+    depends_on:
+      - mongodb
+    networks:
+      - mozart-network
+
+networks:
+  mozart-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:

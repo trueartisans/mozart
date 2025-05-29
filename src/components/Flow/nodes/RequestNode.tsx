@@ -20,6 +20,57 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
 
   const { setNodes, getEdges } = useReactFlow();
 
+  // Load saved data when a component grows or changes data
+  useEffect(() => {
+    if (data?.url !== undefined) setUrl(data.url);
+    if (data?.method !== undefined) setMethod(data.method);
+    if (data?.headers !== undefined) setHeaders(data.headers);
+    if (data?.body !== undefined) setBody(data.body);
+    if (data?.useInputAsHeaders !== undefined) setUseInputAsHeaders(data.useInputAsHeaders);
+    if (data?.useInputAsBody !== undefined) setUseInputAsBody(data.useInputAsBody);
+  }, [data?.url, data?.method, data?.headers, data?.body, data?.useInputAsHeaders, data?.useInputAsBody]);
+
+  const updateNodeData = useCallback((updates: Partial<RequestNodeData>) => {
+    setNodes(nodes =>
+      nodes.map(node =>
+        node.id === id
+          ? { ...node, data: { ...node.data, ...updates } }
+          : node
+      )
+    );
+  }, [id, setNodes]);
+
+  // Handlers for updating state and saving data
+  const handleUrlChange = useCallback((newUrl: string) => {
+    setUrl(newUrl);
+    updateNodeData({ url: newUrl });
+  }, [updateNodeData]);
+
+  const handleMethodChange = useCallback((newMethod: HttpMethod) => {
+    setMethod(newMethod);
+    updateNodeData({ method: newMethod });
+  }, [updateNodeData]);
+
+  const handleHeadersChange = useCallback((newHeaders: string) => {
+    setHeaders(newHeaders);
+    updateNodeData({ headers: newHeaders });
+  }, [updateNodeData]);
+
+  const handleBodyChange = useCallback((newBody: string) => {
+    setBody(newBody);
+    updateNodeData({ body: newBody });
+  }, [updateNodeData]);
+
+  const handleUseInputAsHeadersChange = useCallback((checked: boolean) => {
+    setUseInputAsHeaders(checked);
+    updateNodeData({ useInputAsHeaders: checked });
+  }, [updateNodeData]);
+
+  const handleUseInputAsBodyChange = useCallback((checked: boolean) => {
+    setUseInputAsBody(checked);
+    updateNodeData({ useInputAsBody: checked });
+  }, [updateNodeData]);
+
   const handleSendRequest = useCallback(async () => {
     try {
       setLoading(true);
@@ -44,10 +95,8 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
       let parsedBody = undefined;
       if (method !== 'GET' && body) {
         try {
-          // Try to parse as JSON, but keep as string if it fails
           parsedBody = JSON.parse(body);
         } catch (error) {
-          // If not valid JSON, use the body as string
           parsedBody = body;
 
           if (error instanceof Error) {
@@ -74,7 +123,6 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
       setResponseStatus(res.status);
       setResponseStatusText(res.statusText);
 
-      // Update this node's data
       setNodes(nodes =>
         nodes.map(node =>
           node.id === id
@@ -91,32 +139,25 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
         )
       );
 
-      // Propagate data to connected nodes
       const propagateDataToConnectedNodes = (
         data: Record<string, unknown> | string | number | boolean | null
       ) => {
         const edges = getEdges();
-
-        // Find all outgoing edges from this node
         const outgoingEdges = edges.filter(edge => edge.source === id);
 
         if (outgoingEdges.length > 0) {
           setNodes(nodes =>
             nodes.map(node => {
-              // Check if this node is a target of any outgoing edge
               const isConnectedTarget = outgoingEdges.some(edge => edge.target === node.id);
 
               if (isConnectedTarget) {
-                // Determine which target handle is being used
                 const targetHandles = outgoingEdges
                   .filter(edge => edge.target === node.id)
                   .map(edge => edge.targetHandle);
 
-                // Update the connected node's data based on the handle
                 const updatedData = { ...node.data };
 
                 if (targetHandles.includes('headers')) {
-                  // Ensure headers are an object or string
                   if (typeof data === 'object' || typeof data === 'string') {
                     updatedData.headersInput = data;
                   } else {
@@ -125,10 +166,8 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
                 } else if (targetHandles.includes('body')) {
                   updatedData.bodyInput = data;
                 } else {
-                  // Default handle (in or unspecified)
                   updatedData.inputData = data;
                   if (node.type === 'response') {
-                    // Ensure the data is a compatible type
                     updatedData.response =
                       data as Record<string, unknown> | string | number | boolean | null;
                   }
@@ -160,29 +199,23 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
     }
   }, [method, body, url, setNodes, headers, id, getEdges]);
 
-  // Respond to Start node execution trigger
   useEffect(() => {
     if (data?.triggerExecution) {
-      // If receiving an execution trigger, send the request automatically
       handleSendRequest().then(() => {});
     }
   }, [data?.triggerExecution, handleSendRequest]);
 
-  // Update headers when input data is received on the headers handle
   useEffect(() => {
     if (useInputAsHeaders && data?.headersInput) {
       try {
-        // If input data is already an object, convert to formatted JSON string
         if (typeof data.headersInput === 'object') {
           setHeaders(JSON.stringify(data.headersInput, null, 2));
         } else {
-          // If it's a string, try to parse as JSON to format it
           const headersInputString = String(data.headersInput);
           try {
             const parsedData = JSON.parse(headersInputString);
             setHeaders(JSON.stringify(parsedData, null, 2));
           } catch {
-            // If not valid JSON, use as is
             setHeaders(headersInputString);
           }
         }
@@ -192,21 +225,17 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
     }
   }, [data?.headersInput, useInputAsHeaders, setHeaders]);
 
-  // Update body when input data is received on the body handle
   useEffect(() => {
     if (useInputAsBody && data?.bodyInput && method !== 'GET') {
       try {
-        // If input data is already an object, convert to formatted JSON string
         if (typeof data.bodyInput === 'object') {
           setBody(JSON.stringify(data.bodyInput, null, 2));
         } else {
-          // If it's a string, try to parse as JSON to format it
           const bodyInputString = String(data.bodyInput);
           try {
             const parsedData = JSON.parse(bodyInputString);
             setBody(JSON.stringify(parsedData, null, 2));
           } catch {
-            // If not valid JSON, use as is
             setBody(bodyInputString);
           }
         }
@@ -241,9 +270,9 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
             <div className="w-1/3 mr-2">
               <label className="block text-xs font-medium text-[#F5EFE0] mb-1">Method</label>
               <select
-                className={`block w-full px-3 py-2 text-sm border rounded-md focus:ring-2 focus:ring-[#D5A253] focus:border-[#D5A253] bg-[#242424] border-[#333333] text-[#F5EFE0]`}
+                className="block w-full px-3 py-2 text-sm border rounded-md focus:ring-2 focus:ring-[#D5A253] focus:border-[#D5A253] bg-[#242424] border-[#333333] text-[#F5EFE0]"
                 value={method}
-                onChange={e => setMethod(e.target.value as HttpMethod)}
+                onChange={e => handleMethodChange(e.target.value as HttpMethod)}
               >
                 <option value="GET">GET</option>
                 <option value="POST">POST</option>
@@ -258,7 +287,7 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
                 type="text"
                 className="block w-full px-3 py-2 text-sm border border-[#333333] rounded-md focus:ring-2 focus:ring-[#D5A253] focus:border-[#D5A253] bg-[#242424] text-[#F5EFE0]"
                 value={url}
-                onChange={e => setUrl(e.target.value)}
+                onChange={e => handleUrlChange(e.target.value)}
               />
             </div>
           </div>
@@ -267,14 +296,13 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
             <div className="flex items-center justify-between">
               <label className="block text-xs font-medium text-[#F5EFE0] mb-1">Headers (JSON)</label>
 
-              {/* Option to use input data as headers */}
               {data?.headersInput && (
                 <div className="flex items-center">
                   <label className="flex items-center text-xs font-medium text-[#F5EFE0]">
                     <input
                       type="checkbox"
                       checked={useInputAsHeaders}
-                      onChange={e => setUseInputAsHeaders(e.target.checked)}
+                      onChange={e => handleUseInputAsHeadersChange(e.target.checked)}
                       className="mr-2 h-3 w-3 rounded border-[#333333] text-[#D5A253] focus:ring-[#D5A253] bg-[#242424]"
                     />
                     Use input
@@ -283,7 +311,6 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
               )}
             </div>
 
-            {/* Input data preview for headers */}
             {useInputAsHeaders && data?.headersInput && (
               <div className="mb-2 p-2 bg-[#0A3B3B]/20 border border-[#D5A253]/30 rounded-md">
                 <div className="text-xs text-[#D5A253]/70 mb-1">Input headers:</div>
@@ -306,7 +333,7 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
                   useInputAsHeaders ? 'opacity-80' : ''
                 }`}
                 value={headers}
-                onChange={e => setHeaders(e.target.value)}
+                onChange={e => handleHeadersChange(e.target.value)}
                 rows={2}
                 readOnly={useInputAsHeaders}
               />
@@ -318,14 +345,13 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
               <div className="flex items-center justify-between">
                 <label className="block text-xs font-medium text-[#F5EFE0] mb-1">Body</label>
 
-                {/* Option to use input data as body */}
                 {data?.bodyInput && (
                   <div className="flex items-center">
                     <label className="flex items-center text-xs font-medium text-[#F5EFE0]">
                       <input
                         type="checkbox"
                         checked={useInputAsBody}
-                        onChange={e => setUseInputAsBody(e.target.checked)}
+                        onChange={e => handleUseInputAsBodyChange(e.target.checked)}
                         className="mr-2 h-3 w-3 rounded border-[#333333] text-[#D5A253] focus:ring-[#D5A253] bg-[#242424]"
                       />
                       Use input
@@ -334,7 +360,6 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
                 )}
               </div>
 
-              {/* Input data preview for body */}
               {useInputAsBody && data?.bodyInput && (
                 <div className="mb-2 p-2 bg-[#0A3B3B]/20 border border-[#D5A253]/30 rounded-md">
                   <div className="text-xs text-[#D5A253]/70 mb-1">Input body:</div>
@@ -353,7 +378,7 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
                   useInputAsBody ? 'opacity-80' : ''
                 }`}
                 value={body}
-                onChange={e => setBody(e.target.value)}
+                onChange={e => handleBodyChange(e.target.value)}
                 rows={3}
                 readOnly={useInputAsBody}
               />
@@ -414,7 +439,6 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
               <div className="p-2 bg-[#242424] border border-[#333333] rounded-md text-xs overflow-auto max-h-40 font-mono">
                 <pre className="text-[#F5EFE0]">
                   {
-                    // Check if response is valid for JSON.stringify
                     typeof response === 'object' && true
                       ? JSON.stringify(response, null, 2)
                       : String(response)
@@ -441,7 +465,7 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
         />
       </div>
 
-      {/* Handle for body input (only for non-GET methods) */}
+      {/* Handle for body input */}
       {method !== 'GET' && (
         <div className="absolute -left-[5px] top-[60%] flex items-center">
           <div className="absolute -left-[15px] text-xs text-[#F5EFE0] bg-[#0A3B3B] px-1 py-0.5 rounded">
@@ -458,7 +482,7 @@ export const RequestNode: React.FC<NodeProps<RequestNodeData>> = ({ id, data, is
         </div>
       )}
 
-      {/* Output handle to send data to other nodes */}
+      {/* Output handle */}
       <Handle
         type="source"
         position={Position.Right}

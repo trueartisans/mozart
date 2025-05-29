@@ -8,17 +8,27 @@ export interface NodeData {
   label?: string;
   triggerExecution?: number;
   inputData?: TransformResult;
-  result?: TransformResult;
-  response?: TransformResult;
-  headersInput?: HeadersType;
-  bodyInput?: BodyType;
 }
 
 export interface TransformNodeData extends NodeData {
+  // Configuration data that should be saved
+  code?: string;
+  mode?: 'transform' | 'create';
+
+  // Runtime data (not saved)
   result?: TransformResult;
 }
 
 export interface RequestNodeData extends NodeData {
+  // Configuration data that should be saved
+  url?: string;
+  method?: HttpMethod;
+  headers?: string;
+  body?: string;
+  useInputAsHeaders?: boolean;
+  useInputAsBody?: boolean;
+
+  // Runtime data (not saved)
   response?: Record<string, unknown>;
   headersInput?: HeadersType;
   bodyInput?: BodyType;

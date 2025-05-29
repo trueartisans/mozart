@@ -58,13 +58,31 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   // TODO: Solve Any type
   const debouncedSaveRef = useRef<any>(null);
 
+  //TODO: Solve nodes typeof nodes lint error
+  const cleanNodeDataForSave = useCallback((nodes: typeof nodes) => {
+    return nodes.map(node => ({
+      ...node,
+      data: {
+        ...node.data,
+        response: undefined,
+        result: undefined,
+        headersInput: undefined,
+        bodyInput: undefined,
+        status: undefined,
+        statusText: undefined,
+        triggerExecution: undefined,
+      }
+    }));
+  }, []);
+
   // Initialize a debounced save function
   useEffect(() => {
     debouncedSaveRef.current = debounce(async (id: string, flowNodes: typeof nodes, flowEdges: typeof edges) => {
       try {
         setSaveStatus('saving');
+        const cleanedNodes = cleanNodeDataForSave(flowNodes);
         await axios.put(`/api/flow-definitions/${id}`, {
-          nodes: flowNodes,
+          nodes: cleanedNodes,
           edges: flowEdges,
         });
         console.log(`Flow ${id} saved to database`);
@@ -85,7 +103,7 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
         debouncedSaveRef.current.cancel();
       }
     };
-  }, []);
+  }, [cleanNodeDataForSave]);
 
   // Load flow data when flowId changes
   useEffect(() => {

@@ -29,6 +29,33 @@ return {
 
   const { setNodes, getEdges } = useReactFlow();
 
+  // Load saved data when a component grows or changes data
+  useEffect(() => {
+    if (data?.code !== undefined) setCode(data.code);
+    if (data?.mode !== undefined) setMode(data.mode);
+  }, [data?.code, data?.mode]);
+
+  const updateNodeData = useCallback((updates: Partial<TransformNodeData>) => {
+    setNodes(nodes =>
+      nodes.map(node =>
+        node.id === id
+          ? { ...node, data: { ...node.data, ...updates } }
+          : node
+      )
+    );
+  }, [id, setNodes]);
+
+  // Handlers for updating state and saving data
+  const handleCodeChange = useCallback((newCode: string) => {
+    setCode(newCode);
+    updateNodeData({ code: newCode });
+  }, [updateNodeData]);
+
+  const handleModeChange = useCallback((newMode: 'transform' | 'create') => {
+    setMode(newMode);
+    updateNodeData({ mode: newMode });
+  }, [updateNodeData]);
+
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -39,7 +66,7 @@ return {
     reader.onload = (e) => {
       try {
         const content = e.target?.result as string;
-        setCode(content);
+        handleCodeChange(content);
         setFileUploaded(true);
       } catch (error) {
         if (error instanceof Error) {
@@ -57,16 +84,10 @@ return {
       setLoading(true);
       setError(null);
 
-      // Input data (can be undefined if none)
       const inputData = data?.inputData;
-
-      // Create a function from the code
       const transformFn = new Function('data', code);
-
-      // Execute the function with the input data
       const transformedData = transformFn(inputData);
 
-      // Validate the result type
       if (
         transformedData !== null &&
         typeof transformedData !== 'string' &&
@@ -83,7 +104,6 @@ return {
 
       setResult(typedResult);
 
-      // Update this node's data
       setNodes(nodes =>
         nodes.map(node =>
           node.id === id
@@ -92,7 +112,6 @@ return {
         )
       );
 
-      // Propagate data to connected nodes
       const propagateDataToConnectedNodes = (data: TransformResult) => {
         const edges = getEdges();
         const outgoingEdges = edges.filter(edge => edge.source === id);
@@ -114,9 +133,7 @@ return {
                 const updatedData = { ...node.data };
 
                 if (targetHandles.includes('headers')) {
-                  // Check if data is compatible with HeadersType
                   if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
-                    // Convert to HeadersType ensuring all values are strings
                     const headersData: HeadersType = Object.entries(data).reduce(
                       (acc, [key, value]) => ({
                         ...acc,
@@ -130,20 +147,16 @@ return {
                     updatedData.headersInput = {};
                   }
                 } else if (targetHandles.includes('body')) {
-                  // bodyInput accepts various types, so we can assign directly
                   updatedData.bodyInput = data;
                 } else {
-                  // Default handle (in or unspecified)
                   updatedData.inputData = data;
 
-                  // If it's a response node, explicitly set the response property
                   if (node.type === 'response') {
                     console.log(`TransformNode ${id} setting response for node ${node.id}:`, data);
                     updatedData.response = data;
                   }
                 }
 
-                // Add an execution trigger
                 updatedData.triggerExecution = Date.now();
 
                 return {
@@ -169,7 +182,6 @@ return {
     }
   }, [code, data?.inputData, id, setNodes, getEdges]);
 
-  // Respond to Start node execution trigger
   useEffect(() => {
     if (data?.triggerExecution) {
       console.log(`TransformNode ${id} received trigger:`, data.triggerExecution);
@@ -177,7 +189,6 @@ return {
     }
   }, [data?.triggerExecution, id, handleTransform]);
 
-  // Execute transformation when input data changes (if in transform mode)
   useEffect(() => {
     if (mode === 'transform' && data?.inputData) {
       console.log(`TransformNode ${id} received input data:`, data.inputData);
@@ -221,7 +232,7 @@ return {
                       ? 'bg-[#8B5CF6] text-white'
                       : 'text-[#F5EFE0]/70 hover:text-[#F5EFE0]'
                   }`}
-                  onClick={() => setMode('transform')}
+                  onClick={() => handleModeChange('transform')}
                 >
                   Transform
                 </button>
@@ -231,14 +242,13 @@ return {
                       ? 'bg-[#8B5CF6] text-white'
                       : 'text-[#F5EFE0]/70 hover:text-[#F5EFE0]'
                   }`}
-                  onClick={() => setMode('create')}
+                  onClick={() => handleModeChange('create')}
                 >
                   Create
                 </button>
               </div>
             </div>
 
-            {/* Input data preview (only in transform mode) */}
             {mode === 'transform' && data?.inputData && (
               <div className="mb-3 p-2 bg-[#2D1D60]/30 border border-[#8B5CF6]/30 rounded-md animate-fadeIn">
                 <div className="text-xs text-[#8B5CF6]/70 mb-1 flex items-center">
@@ -257,7 +267,6 @@ return {
               </div>
             )}
 
-            {/* File upload button */}
             <div className="mb-3 flex items-center justify-between">
               <div className="flex items-center">
                 <button
@@ -295,7 +304,7 @@ return {
               <textarea
                 className="block w-full px-3 py-2 text-sm border border-[#333333] rounded-md font-mono focus:ring-2 focus:ring-[#8B5CF6] focus:border-[#8B5CF6] bg-[#242424] text-[#F5EFE0] transition-colors hover:bg-[#2A2A2A]"
                 value={code}
-                onChange={(e) => setCode(e.target.value)}
+                onChange={(e) => handleCodeChange(e.target.value)}
                 rows={8}
                 style={{ paddingTop: '2rem' }}
               />
@@ -354,7 +363,6 @@ return {
         </div>
       )}
 
-      {/* Upload modal */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 animate-fadeIn">
           <div className="bg-[#1A1A1A] rounded-xl shadow-lg border border-[#2A2A2A] w-96 p-4 transform transition-all scale-100 animate-scaleIn">
@@ -424,7 +432,6 @@ return main();`}</pre>
         </div>
       )}
 
-      {/* Input handle - always visible to allow connection with Start */}
       <div className="absolute -left-[5px] top-[50%] flex items-center">
         <div className="absolute -left-[15px] text-xs text-[#F5EFE0] bg-[#0A3B3B] px-1 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity">
           Input
@@ -442,7 +449,6 @@ return main();`}</pre>
         />
       </div>
 
-      {/* Output handle to send data to other nodes */}
       <div className="absolute -right-[5px] top-[50%] flex items-center">
         <div className="absolute -right-[15px] text-xs text-[#F5EFE0] bg-[#0A3B3B] px-1 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity">
           Output

@@ -13,13 +13,14 @@ import ReactFlow, {
 } from 'reactflow';
 import { FlowNode } from '@/types/flow';
 import 'reactflow/dist/style.css';
-import { GlobeAmericasIcon, CubeTransparentIcon, EyeIcon, PlayIcon } from '@heroicons/react/24/solid';
+import { GlobeAmericasIcon, CubeTransparentIcon, EyeIcon, PlayIcon, ClockIcon, ArrowUturnLeftIcon, ExclamationTriangleIcon } from '@heroicons/react/24/solid';
 import { debounce } from 'lodash';
 import axios from 'axios';
 
 import { RequestNode } from './nodes/RequestNode';
 import ResponseNode from './nodes/ResponseNode';
 import { TransformNode } from './nodes/TransformNode';
+import VersionHistory from './VersionHistory';
 
 const nodeTypes = {
   request: RequestNode,
@@ -36,6 +37,16 @@ interface FlowProps {
   flowId: string | null;
 }
 
+interface FlowDefinition {
+  _id: string;
+  flowId: string;
+  nodes: any[];
+  edges: any[];
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -50,6 +61,13 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error' | null>(null);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [currentVersion, setCurrentVersion] = useState<number | null>(null);
+
+  const [isViewingOldVersion, setIsViewingOldVersion] = useState(false);
+  const [viewingVersion, setViewingVersion] = useState<FlowDefinition | null>(null);
+  const [originalNodes, setOriginalNodes] = useState<any[]>([]);
+  const [originalEdges, setOriginalEdges] = useState<any[]>([]);
 
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
@@ -78,14 +96,22 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   // Initialize a debounced save function
   useEffect(() => {
     debouncedSaveRef.current = debounce(async (id: string, flowNodes: typeof nodes, flowEdges: typeof edges) => {
+      // Does not save if viewing an old version
+      if (isViewingOldVersion) {
+        return;
+      }
+
       try {
         setSaveStatus('saving');
         const cleanedNodes = cleanNodeDataForSave(flowNodes);
-        await axios.put(`/api/flow-definitions/${id}`, {
+        const response = await axios.put(`/api/flow-definitions/${id}`, {
           nodes: cleanedNodes,
           edges: flowEdges,
         });
-        console.log(`Flow ${id} saved to database`);
+
+        setCurrentVersion(response.data.version);
+
+        console.log(`Flow ${id} saved to database - Version ${response.data.version}`);
         setSaveStatus('saved');
 
         // Reset save status after a delay
@@ -103,7 +129,7 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
         debouncedSaveRef.current.cancel();
       }
     };
-  }, [cleanNodeDataForSave]);
+  }, [cleanNodeDataForSave, isViewingOldVersion]);
 
   // Load flow data when flowId changes
   useEffect(() => {
@@ -112,17 +138,25 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
         try {
           setIsLoading(true);
           setExecutionError(null);
+          setIsViewingOldVersion(false);
+          setViewingVersion(null);
 
           const response = await axios.get(`/api/flow-definitions/${flowId}`);
-          const { nodes: savedNodes, edges: savedEdges } = response.data;
+          const { nodes: savedNodes, edges: savedEdges, version } = response.data;
 
           if (savedNodes && savedEdges) {
             setNodes(savedNodes);
             setEdges(savedEdges);
+            setOriginalNodes(savedNodes);
+            setOriginalEdges(savedEdges);
+            setCurrentVersion(version);
             setFitViewOnLoad(true);
           } else {
             setNodes([]);
             setEdges([]);
+            setOriginalNodes([]);
+            setOriginalEdges([]);
+            setCurrentVersion(null);
 
             // Create an empty flow definition if none exists
             await axios.put(`/api/flow-definitions/${flowId}`, {
@@ -134,6 +168,9 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
           console.error('Error loading flow data:', error);
           setNodes([]);
           setEdges([]);
+          setOriginalNodes([]);
+          setOriginalEdges([]);
+          setCurrentVersion(null);
 
           if (error instanceof Error) {
             setExecutionError(`Error loading flow: ${error.message}`);
@@ -160,16 +197,21 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
     } else {
       setNodes([]);
       setEdges([]);
+      setOriginalNodes([]);
+      setOriginalEdges([]);
+      setCurrentVersion(null);
       setFlowInitialized(null);
+      setIsViewingOldVersion(false);
+      setViewingVersion(null);
     }
   }, [flowId, setNodes, setEdges]);
 
-  // Save flow data when nodes or edges change
+  // Save flow data when nodes or edges change (only if not viewing old version)
   useEffect(() => {
-    if (flowId && flowId === flowInitialized && debouncedSaveRef.current && (nodes.length > 0 || edges.length > 0)) {
+    if (flowId && flowId === flowInitialized && debouncedSaveRef.current && (nodes.length > 0 || edges.length > 0) && !isViewingOldVersion) {
       debouncedSaveRef.current(flowId, nodes, edges);
     }
-  }, [flowId, flowInitialized, nodes, edges]);
+  }, [flowId, flowInitialized, nodes, edges, isViewingOldVersion]);
 
   // Reset fit view after nodes are loaded
   useEffect(() => {
@@ -179,13 +221,17 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   }, [nodes.length]);
 
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
-    [setEdges]
+    (params: Connection) => {
+      // Does not allow connections if viewing old version
+      if (isViewingOldVersion) return;
+      setEdges((eds) => addEdge(params, eds));
+    },
+    [setEdges, isViewingOldVersion]
   );
 
   const onAddNode = useCallback(
     (type: 'request' | 'response' | 'transform', position?: { x: number; y: number }) => {
-      if (!flowId) return;
+      if (!flowId || isViewingOldVersion) return;
 
       const pos = position || { x: 250, y: 250 };
       const newNode: FlowNode = {
@@ -197,12 +243,12 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
       setNodes((nds) => nds.concat(newNode));
       setContextMenu(null);
     },
-    [setNodes, flowId]
+    [setNodes, flowId, isViewingOldVersion]
   );
 
   const onContextMenu = useCallback(
     (event: React.MouseEvent) => {
-      if (!flowId) return;
+      if (!flowId || isViewingOldVersion) return;
 
       event.preventDefault();
 
@@ -225,7 +271,7 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
         flowPosition: position,
       });
     },
-    [reactFlowInstance, flowId]
+    [reactFlowInstance, flowId, isViewingOldVersion]
   );
 
   const onPaneClick = useCallback(() => {
@@ -233,7 +279,7 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   }, []);
 
   const executeFlow = useCallback(() => {
-    if (!flowId || nodes.length === 0) return;
+    if (!flowId || nodes.length === 0 || isViewingOldVersion) return;
 
     setIsExecuting(true);
     setExecutionError(null);
@@ -278,7 +324,73 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
       }
       setIsExecuting(false);
     }
-  }, [flowId, nodes, edges, setNodes]);
+  }, [flowId, nodes, edges, setNodes, isViewingOldVersion]);
+
+  const handleVersionSelect = useCallback((version: FlowDefinition) => {
+    // Saves the current state if you are not already viewing an old version
+    if (!isViewingOldVersion) {
+      setOriginalNodes(nodes);
+      setOriginalEdges(edges);
+    }
+
+    // Loads the selected version for viewing
+    setNodes(version.nodes);
+    setEdges(version.edges);
+    setIsViewingOldVersion(true);
+    setViewingVersion(version);
+    setShowVersionHistory(false);
+    setFitViewOnLoad(true);
+  }, [nodes, edges, setNodes, setEdges, isViewingOldVersion]);
+
+  const handleRestoreVersion = useCallback(async () => {
+    if (!viewingVersion || !flowId) return;
+
+    if (confirm('Restore this version? This will save it as the current version.')) {
+      try {
+        // Saves the previewed version as the new current version
+        const response = await axios.put(`/api/flow-definitions/${flowId}`, {
+          nodes: viewingVersion.nodes,
+          edges: viewingVersion.edges,
+        });
+
+        setCurrentVersion(response.data.version);
+        setOriginalNodes(viewingVersion.nodes);
+        setOriginalEdges(viewingVersion.edges);
+        setIsViewingOldVersion(false);
+        setViewingVersion(null);
+
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus(null), 2000);
+
+      } catch (error) {
+        console.error('Error restoring version:', error);
+        setExecutionError('Error restoring version');
+      }
+    }
+  }, [viewingVersion, flowId]);
+
+  const handleExitViewMode = useCallback(() => {
+    // Return to original version
+    setNodes(originalNodes);
+    setEdges(originalEdges);
+    setIsViewingOldVersion(false);
+    setViewingVersion(null);
+    setFitViewOnLoad(true);
+  }, [originalNodes, originalEdges, setNodes, setEdges]);
+
+  // Modify to not allow changes in view mode
+  const handleNodesChange = useCallback((changes: any) => {
+    if (!isViewingOldVersion) {
+      onNodesChange(changes);
+    }
+  }, [onNodesChange, isViewingOldVersion]);
+
+  // Modify to not allow changes in view mode
+  const handleEdgesChange = useCallback((changes: any) => {
+    if (!isViewingOldVersion) {
+      onEdgesChange(changes);
+    }
+  }, [onEdgesChange, isViewingOldVersion]);
 
   if (!flowId) {
     return (
@@ -315,8 +427,8 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
+        onNodesChange={handleNodesChange}
+        onEdgesChange={handleEdgesChange}
         onConnect={onConnect}
         nodeTypes={nodeTypes}
         fitView={fitViewOnLoad}
@@ -326,6 +438,9 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
         onPaneClick={onPaneClick}
         onInit={setReactFlowInstance}
         defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+        nodesDraggable={!isViewingOldVersion}
+        nodesConnectable={!isViewingOldVersion}
+        elementsSelectable={!isViewingOldVersion}
       >
         <Controls
           position="bottom-right"
@@ -351,65 +466,118 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
         />
         <Background gap={16} size={1} color="#2A2A2A" />
 
-        {/* Panel para o indicador de salvamento centralizado no topo */}
-        <Panel position="top-center" className="mt-4">
-          {saveStatus && (
-            <div className={`px-3 py-1.5 rounded-md text-sm flex items-center shadow-md border ${
-              saveStatus === 'saving' ? 'bg-[#0A3B3B] text-[#D5A253] border-[#D5A253]/20' :
-                saveStatus === 'saved' ? 'bg-green-900/30 text-green-400 border-green-800/20' :
-                  'bg-red-900/30 text-red-400 border-red-800/20'
-            }`}>
-              {saveStatus === 'saving' && (
+        {/* Banner de modo de visualização */}
+        {isViewingOldVersion && viewingVersion && (
+          <Panel position="top-center" className="mt-4">
+            <div className="bg-amber-900/30 border border-amber-800/50 rounded-lg p-3 flex items-center space-x-3 shadow-lg">
+              <ExclamationTriangleIcon className="h-5 w-5 text-amber-400 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="text-amber-200 text-sm font-medium">
+                  Viewing Version {viewingVersion.version} (Read-only)
+                </p>
+                <p className="text-amber-300/70 text-xs">
+                  Created on {new Date(viewingVersion.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex space-x-2">
+                <button
+                  onClick={handleRestoreVersion}
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs rounded-md transition-colors flex items-center"
+                >
+                  <ArrowUturnLeftIcon className="h-3 w-3 mr-1" />
+                  Restore
+                </button>
+                <button
+                  onClick={handleExitViewMode}
+                  className="px-3 py-1.5 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded-md transition-colors"
+                >
+                  Exit View
+                </button>
+              </div>
+            </div>
+          </Panel>
+        )}
+
+        {!isViewingOldVersion && (
+          <Panel position="top-center" className="mt-4">
+            <div className="flex items-center space-x-3">
+              {saveStatus && (
+                <div className={`px-3 py-1.5 rounded-md text-sm flex items-center shadow-md border ${
+                  saveStatus === 'saving' ? 'bg-[#0A3B3B] text-[#D5A253] border-[#D5A253]/20' :
+                    saveStatus === 'saved' ? 'bg-green-900/30 text-green-400 border-green-800/20' :
+                      'bg-red-900/30 text-red-400 border-red-800/20'
+                }`}>
+                  {saveStatus === 'saving' && (
+                    <>
+                      <svg className="animate-spin h-3 w-3 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Saving...
+                    </>
+                  )}
+                  {saveStatus === 'saved' && (
+                    <>
+                      <svg className="h-3 w-3 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
+                      Flow saved
+                    </>
+                  )}
+                  {saveStatus === 'error' && (
+                    <>
+                      <svg className="h-3 w-3 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                      </svg>
+                      Error saving
+                    </>
+                  )}
+                </div>
+              )}
+
+              {currentVersion && (
+                <div className="px-3 py-1.5 rounded-md text-sm flex items-center bg-[#0A3B3B] text-[#D5A253] border border-[#D5A253]/20 shadow-md">
+                  <ClockIcon className="h-3 w-3 mr-2" />
+                  Version {currentVersion}
+                </div>
+              )}
+            </div>
+          </Panel>
+        )}
+
+        <Panel position="top-right" className="mr-4 mt-4 flex flex-col items-end space-y-2">
+          <div className="flex space-x-2">
+            <button
+              onClick={() => setShowVersionHistory(true)}
+              className="flex items-center justify-center px-3 py-2 bg-[#0A3B3B] hover:bg-[#0F4D4D] text-[#D5A253] rounded-lg transition-colors border border-[#2A2A2A] shadow-md"
+              title="Version History"
+              disabled={!flowId}
+            >
+              <ClockIcon className="h-4 w-4" />
+            </button>
+
+            <button
+              onClick={executeFlow}
+              disabled={isExecuting || nodes.length === 0 || isLoading || isViewingOldVersion}
+              className="flex items-center justify-center px-4 py-2 bg-gradient-to-r from-[#6366F1] to-[#4F46E5] text-white rounded-lg hover:from-[#818CF8] hover:to-[#6366F1] transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+              title={isViewingOldVersion ? "Cannot execute in view mode" : "Execute flow"}
+            >
+              {isExecuting ? (
                 <>
-                  <svg className="animate-spin h-3 w-3 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
-                  Saving...
+                  Executing...
                 </>
-              )}
-              {saveStatus === 'saved' && (
+              ) : (
                 <>
-                  <svg className="h-3 w-3 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                  </svg>
-                  Flow saved
+                  <PlayIcon className="h-5 w-5 mr-2" />
+                  Execute
                 </>
               )}
-              {saveStatus === 'error' && (
-                <>
-                  <svg className="h-3 w-3 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                  </svg>
-                  Error saving
-                </>
-              )}
-            </div>
-          )}
-        </Panel>
-
-        {/* Panel para o botão de execução e mensagens de erro no canto superior direito */}
-        <Panel position="top-right" className="mr-4 mt-4 flex flex-col items-end space-y-2">
-          <button
-            onClick={executeFlow}
-            disabled={isExecuting || nodes.length === 0 || isLoading}
-            className="flex items-center justify-center px-4 py-2 bg-gradient-to-r from-[#6366F1] to-[#4F46E5] text-white rounded-lg hover:from-[#818CF8] hover:to-[#6366F1] transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isExecuting ? (
-              <>
-                <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Executing...
-              </>
-            ) : (
-              <>
-                <PlayIcon className="h-5 w-5 mr-2" />
-                Execute
-              </>
-            )}
-          </button>
+            </button>
+          </div>
 
           {executionError && (
             <div className="p-2 bg-red-900/30 border border-red-800 rounded-md">
@@ -418,33 +586,35 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
           )}
         </Panel>
 
-        <Panel position="bottom-center" className="flex justify-center items-center mb-4">
-          <div className="bg-[#0A2C2C] p-2 rounded-lg shadow-md border border-[#2A2A2A] flex space-x-2">
-            <button
-              onClick={() => onAddNode('request')}
-              className="flex items-center justify-center px-3 py-2 bg-gradient-to-r from-[#D5A253] to-[#BF8A3D] text-[#0A3B3B] text-sm font-medium rounded-md hover:from-[#E6B978] hover:to-[#D5A253] transition-all shadow-sm"
-            >
-              <GlobeAmericasIcon className="h-4 w-4 mr-1" />
-              Request
-            </button>
-            <button
-              onClick={() => onAddNode('response')}
-              className="flex items-center justify-center px-3 py-2 bg-gradient-to-r from-[#10B981] to-[#059669] text-white text-sm font-medium rounded-md hover:from-[#34D399] hover:to-[#10B981] transition-all shadow-sm"
-            >
-              <EyeIcon className="h-4 w-4 mr-1" />
-              Response
-            </button>
-            <button
-              onClick={() => onAddNode('transform')}
-              className="flex items-center justify-center px-3 py-2 bg-gradient-to-r from-[#8B5CF6] to-[#7C3AED] text-white text-sm font-medium rounded-md hover:from-[#A78BFA] hover:to-[#8B5CF6] transition-all shadow-sm"
-            >
-              <CubeTransparentIcon className="h-4 w-4 mr-1" />
-              Transform
-            </button>
-          </div>
-        </Panel>
+        {!isViewingOldVersion && (
+          <Panel position="bottom-center" className="flex justify-center items-center mb-4">
+            <div className="bg-[#0A2C2C] p-2 rounded-lg shadow-md border border-[#2A2A2A] flex space-x-2">
+              <button
+                onClick={() => onAddNode('request')}
+                className="flex items-center justify-center px-3 py-2 bg-gradient-to-r from-[#D5A253] to-[#BF8A3D] text-[#0A3B3B] text-sm font-medium rounded-md hover:from-[#E6B978] hover:to-[#D5A253] transition-all shadow-sm"
+              >
+                <GlobeAmericasIcon className="h-4 w-4 mr-1" />
+                Request
+              </button>
+              <button
+                onClick={() => onAddNode('response')}
+                className="flex items-center justify-center px-3 py-2 bg-gradient-to-r from-[#10B981] to-[#059669] text-white text-sm font-medium rounded-md hover:from-[#34D399] hover:to-[#10B981] transition-all shadow-sm"
+              >
+                <EyeIcon className="h-4 w-4 mr-1" />
+                Response
+              </button>
+              <button
+                onClick={() => onAddNode('transform')}
+                className="flex items-center justify-center px-3 py-2 bg-gradient-to-r from-[#8B5CF6] to-[#7C3AED] text-white text-sm font-medium rounded-md hover:from-[#A78BFA] hover:to-[#8B5CF6] transition-all shadow-sm"
+              >
+                <CubeTransparentIcon className="h-4 w-4 mr-1" />
+                Transform
+              </button>
+            </div>
+          </Panel>
+        )}
 
-        {contextMenu?.visible && (
+        {contextMenu?.visible && !isViewingOldVersion && (
           <div
             className="fixed z-50 bg-[#0A2C2C] rounded-lg shadow-lg border border-[#2A2A2A] overflow-hidden"
             style={{
@@ -478,6 +648,14 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
           </div>
         )}
       </ReactFlow>
+
+      {showVersionHistory && flowId && (
+        <VersionHistory
+          flowId={flowId}
+          onVersionSelect={handleVersionSelect}
+          onClose={() => setShowVersionHistory(false)}
+        />
+      )}
     </div>
   );
 };

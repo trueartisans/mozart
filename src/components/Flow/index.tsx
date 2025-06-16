@@ -14,13 +14,13 @@ import ReactFlow, {
 import { FlowNode } from '@/types/flow';
 import 'reactflow/dist/style.css';
 import { GlobeAmericasIcon, CubeTransparentIcon, EyeIcon, PlayIcon, ClockIcon, ArrowUturnLeftIcon, ExclamationTriangleIcon } from '@heroicons/react/24/solid';
-import { debounce } from 'lodash';
 import axios from 'axios';
 
 import { RequestNode } from './nodes/RequestNode';
 import ResponseNode from './nodes/ResponseNode';
 import { TransformNode } from './nodes/TransformNode';
 import VersionHistory from './VersionHistory';
+import { useAutoSave } from './hooks/useAutoSave';
 
 const nodeTypes = {
   request: RequestNode,
@@ -60,9 +60,10 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error' | null>(null);
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error' | 'local' | null>(null);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [currentVersion, setCurrentVersion] = useState<number | null>(null);
+  const [hasLocalChanges, setHasLocalChanges] = useState(false);
 
   const [isViewingOldVersion, setIsViewingOldVersion] = useState(false);
   const [viewingVersion, setViewingVersion] = useState<FlowDefinition | null>(null);
@@ -73,145 +74,194 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [fitViewOnLoad, setFitViewOnLoad] = useState(true);
 
-  // TODO: Solve Any type
-  const debouncedSaveRef = useRef<any>(null);
+  const isLoadingDataRef = useRef<boolean>(false);
 
-  //TODO: Solve nodes typeof nodes lint error
-  const cleanNodeDataForSave = useCallback((nodes: typeof nodes) => {
-    return nodes.map(node => ({
-      ...node,
-      data: {
-        ...node.data,
-        response: undefined,
-        result: undefined,
-        headersInput: undefined,
-        bodyInput: undefined,
-        status: undefined,
-        statusText: undefined,
-        triggerExecution: undefined,
+  const saveStatusTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const {
+    scheduleAutoSave,
+    loadLocalDraft,
+    clearLocalDraft,
+    saveToServer,
+    markDataAsKnown,
+    setLoading,
+    hasUnsavedChanges
+  } = useAutoSave(flowId, isViewingOldVersion, {
+    delay: 4000,
+    onSaveStart: () => {
+      setSaveStatus('saving');
+      setHasLocalChanges(false);
+
+      if (saveStatusTimeoutRef.current) {
+        clearTimeout(saveStatusTimeoutRef.current);
       }
-    }));
-  }, []);
+    },
+    onSaveSuccess: (version: number) => {
+      setCurrentVersion(version);
+      setSaveStatus('saved');
+      clearLocalDraft();
+      setHasLocalChanges(false);
 
-  // Initialize a debounced save function
-  useEffect(() => {
-    debouncedSaveRef.current = debounce(async (id: string, flowNodes: typeof nodes, flowEdges: typeof edges) => {
-      // Does not save if viewing an old version
-      if (isViewingOldVersion) {
-        return;
+      saveStatusTimeoutRef.current = setTimeout(() => {
+        setSaveStatus(null);
+      }, 3000);
+    },
+    onSaveError: (error: string) => {
+      console.error('Auto-save error:', error);
+      setSaveStatus('error');
+      setExecutionError(`Auto-save failed: ${error}`);
+
+      saveStatusTimeoutRef.current = setTimeout(() => {
+        setSaveStatus(null);
+      }, 5000);
+    },
+    onLocalSave: () => {
+      setSaveStatus('local');
+      setHasLocalChanges(true);
+
+      if (saveStatusTimeoutRef.current) {
+        clearTimeout(saveStatusTimeoutRef.current);
       }
-
-      try {
-        setSaveStatus('saving');
-        const cleanedNodes = cleanNodeDataForSave(flowNodes);
-        const response = await axios.put(`/api/flow-definitions/${id}`, {
-          nodes: cleanedNodes,
-          edges: flowEdges,
-        });
-
-        setCurrentVersion(response.data.version);
-
-        console.log(`Flow ${id} saved to database - Version ${response.data.version}`);
-        setSaveStatus('saved');
-
-        // Reset save status after a delay
-        setTimeout(() => {
-          setSaveStatus(null);
-        }, 500);
-      } catch (error) {
-        console.error('Error saving flow:', error);
-        setSaveStatus('error');
-      }
-    }, 1000);
-
-    return () => {
-      if (debouncedSaveRef.current?.cancel) {
-        debouncedSaveRef.current.cancel();
-      }
-    };
-  }, [cleanNodeDataForSave, isViewingOldVersion]);
+      saveStatusTimeoutRef.current = setTimeout(() => {
+        setSaveStatus(null);
+      }, 2000);
+    }
+  });
 
   // Load flow data when flowId changes
   useEffect(() => {
-    if (flowId) {
-      const fetchFlowDefinition = async () => {
-        try {
-          setIsLoading(true);
-          setExecutionError(null);
-          setIsViewingOldVersion(false);
-          setViewingVersion(null);
+    if (!flowId || isLoadingDataRef.current) return;
 
-          const response = await axios.get(`/api/flow-definitions/${flowId}`);
-          const { nodes: savedNodes, edges: savedEdges, version } = response.data;
+    const fetchFlowDefinition = async () => {
+      if (isLoadingDataRef.current) return;
 
-          if (savedNodes && savedEdges) {
-            setNodes(savedNodes);
-            setEdges(savedEdges);
-            setOriginalNodes(savedNodes);
-            setOriginalEdges(savedEdges);
-            setCurrentVersion(version);
-            setFitViewOnLoad(true);
+      isLoadingDataRef.current = true;
+      setLoading(true);
+
+      try {
+        setIsLoading(true);
+        setExecutionError(null);
+        setIsViewingOldVersion(false);
+        setViewingVersion(null);
+        setSaveStatus(null); // Limpa status ao carregar
+        setHasLocalChanges(false);
+
+        console.log(`Loading flow definition for ${flowId}`);
+
+        const response = await axios.get(`/api/flow-definitions/${flowId}`);
+        const { nodes: savedNodes, edges: savedEdges, version } = response.data;
+
+        const localDraft = loadLocalDraft();
+
+        if (localDraft && localDraft.timestamp) {
+          const serverTimestamp = new Date(response.data.updatedAt).getTime();
+
+          if (localDraft.timestamp > serverTimestamp) {
+            setNodes(localDraft.nodes || []);
+            setEdges(localDraft.edges || []);
+            setHasLocalChanges(true);
+            
+            console.log('Loaded more recent local draft');
+
+            markDataAsKnown(localDraft.nodes || [], localDraft.edges || []);
           } else {
-            setNodes([]);
-            setEdges([]);
-            setOriginalNodes([]);
-            setOriginalEdges([]);
-            setCurrentVersion(null);
+            clearLocalDraft();
+            setNodes(savedNodes || []);
+            setEdges(savedEdges || []);
+            setHasLocalChanges(false);
 
-            // Create an empty flow definition if none exists
-            await axios.put(`/api/flow-definitions/${flowId}`, {
-              nodes: [],
-              edges: [],
-            });
+            markDataAsKnown(savedNodes || [], savedEdges || []);
           }
-        } catch (error) {
-          console.error('Error loading flow data:', error);
+        } else {
+          setNodes(savedNodes || []);
+          setEdges(savedEdges || []);
+          setHasLocalChanges(false);
+
+          markDataAsKnown(savedNodes || [], savedEdges || []);
+        }
+
+        setOriginalNodes(savedNodes || []);
+        setOriginalEdges(savedEdges || []);
+        setCurrentVersion(version);
+        setFitViewOnLoad(true);
+        setFlowInitialized(flowId);
+
+      } catch (error) {
+        console.error('Error loading flow data:', error);
+
+        const localDraft = loadLocalDraft();
+        if (localDraft) {
+          setNodes(localDraft.nodes || []);
+          setEdges(localDraft.edges || []);
+          setHasLocalChanges(true);
+          console.log('Loaded local draft after server error');
+
+          markDataAsKnown(localDraft.nodes || [], localDraft.edges || []);
+        } else {
           setNodes([]);
           setEdges([]);
-          setOriginalNodes([]);
-          setOriginalEdges([]);
-          setCurrentVersion(null);
+          setHasLocalChanges(false);
 
-          if (error instanceof Error) {
-            setExecutionError(`Error loading flow: ${error.message}`);
-          } else {
-            setExecutionError('Error loading flow data');
-          }
-
-          // Create an empty flow definition if none exists
-          try {
-            await axios.put(`/api/flow-definitions/${flowId}`, {
-              nodes: [],
-              edges: [],
-            });
-          } catch (createError) {
-            console.error('Error creating empty flow definition:', createError);
-          }
-        } finally {
-          setIsLoading(false);
-          setFlowInitialized(flowId);
+          markDataAsKnown([], []);
         }
-      };
 
-      fetchFlowDefinition();
-    } else {
-      setNodes([]);
-      setEdges([]);
-      setOriginalNodes([]);
-      setOriginalEdges([]);
-      setCurrentVersion(null);
-      setFlowInitialized(null);
-      setIsViewingOldVersion(false);
-      setViewingVersion(null);
-    }
-  }, [flowId, setNodes, setEdges]);
+        setOriginalNodes([]);
+        setOriginalEdges([]);
+        setCurrentVersion(null);
 
-  // Save flow data when nodes or edges change (only if not viewing old version)
+        if (error instanceof Error) {
+          setExecutionError(`Error loading flow: ${error.message}`);
+        } else {
+          setExecutionError('Error loading flow data');
+        }
+
+        try {
+          await axios.put(`/api/flow-definitions/${flowId}`, {
+            nodes: [],
+            edges: [],
+          });
+        } catch (createError) {
+          console.error('Error creating empty flow definition:', createError);
+        }
+
+        setFlowInitialized(flowId);
+      } finally {
+        setIsLoading(false);
+        setLoading(false);
+        isLoadingDataRef.current = false;
+      }
+    };
+
+    fetchFlowDefinition();
+
+    return () => {
+      if (flowId !== flowInitialized) {
+        setNodes([]);
+        setEdges([]);
+        setOriginalNodes([]);
+        setOriginalEdges([]);
+        setCurrentVersion(null);
+        setFlowInitialized(null);
+        setIsViewingOldVersion(false);
+        setViewingVersion(null);
+        setHasLocalChanges(false);
+        setSaveStatus(null);
+        isLoadingDataRef.current = false;
+
+        // Limpa timeout de status
+        if (saveStatusTimeoutRef.current) {
+          clearTimeout(saveStatusTimeoutRef.current);
+        }
+      }
+    };
+  }, [flowId]);
+
+  // Auto-save when nodes or edges change
   useEffect(() => {
-    if (flowId && flowId === flowInitialized && debouncedSaveRef.current && (nodes.length > 0 || edges.length > 0) && !isViewingOldVersion) {
-      debouncedSaveRef.current(flowId, nodes, edges);
+    if (flowId && flowId === flowInitialized && !isViewingOldVersion && !isLoadingDataRef.current) {
+      scheduleAutoSave(nodes, edges);
     }
-  }, [flowId, flowInitialized, nodes, edges, isViewingOldVersion]);
+  }, [flowId, flowInitialized, nodes, edges, isViewingOldVersion, scheduleAutoSave]);
 
   // Reset fit view after nodes are loaded
   useEffect(() => {
@@ -220,9 +270,17 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
     }
   }, [nodes.length]);
 
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (saveStatusTimeoutRef.current) {
+        clearTimeout(saveStatusTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const onConnect = useCallback(
     (params: Connection) => {
-      // Does not allow connections if viewing old version
       if (isViewingOldVersion) return;
       setEdges((eds) => addEdge(params, eds));
     },
@@ -327,13 +385,11 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
   }, [flowId, nodes, edges, setNodes, isViewingOldVersion]);
 
   const handleVersionSelect = useCallback((version: FlowDefinition) => {
-    // Saves the current state if you are not already viewing an old version
     if (!isViewingOldVersion) {
       setOriginalNodes(nodes);
       setOriginalEdges(edges);
     }
 
-    // Loads the selected version for viewing
     setNodes(version.nodes);
     setEdges(version.edges);
     setIsViewingOldVersion(true);
@@ -347,7 +403,6 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
 
     if (confirm('Restore this version? This will save it as the current version.')) {
       try {
-        // Saves the previewed version as the new current version
         const response = await axios.put(`/api/flow-definitions/${flowId}`, {
           nodes: viewingVersion.nodes,
           edges: viewingVersion.edges,
@@ -358,34 +413,42 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
         setOriginalEdges(viewingVersion.edges);
         setIsViewingOldVersion(false);
         setViewingVersion(null);
+        clearLocalDraft();
+
+        markDataAsKnown(viewingVersion.nodes, viewingVersion.edges);
 
         setSaveStatus('saved');
-        setTimeout(() => setSaveStatus(null), 2000);
+        setTimeout(() => setSaveStatus(null), 3000);
 
       } catch (error) {
         console.error('Error restoring version:', error);
         setExecutionError('Error restoring version');
       }
     }
-  }, [viewingVersion, flowId]);
+  }, [viewingVersion, flowId, clearLocalDraft, markDataAsKnown]);
 
   const handleExitViewMode = useCallback(() => {
-    // Return to original version
     setNodes(originalNodes);
     setEdges(originalEdges);
     setIsViewingOldVersion(false);
     setViewingVersion(null);
     setFitViewOnLoad(true);
-  }, [originalNodes, originalEdges, setNodes, setEdges]);
 
-  // Modify to not allow changes in view mode
+    markDataAsKnown(originalNodes, originalEdges);
+  }, [originalNodes, originalEdges, setNodes, setEdges, markDataAsKnown]);
+
+  const handleManualSave = useCallback(() => {
+    if (flowId && !isViewingOldVersion) {
+      saveToServer(nodes, edges);
+    }
+  }, [flowId, isViewingOldVersion, nodes, edges, saveToServer]);
+
   const handleNodesChange = useCallback((changes: any) => {
     if (!isViewingOldVersion) {
       onNodesChange(changes);
     }
   }, [onNodesChange, isViewingOldVersion]);
 
-  // Modify to not allow changes in view mode
   const handleEdgesChange = useCallback((changes: any) => {
     if (!isViewingOldVersion) {
       onEdgesChange(changes);
@@ -501,11 +564,13 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
         {!isViewingOldVersion && (
           <Panel position="top-center" className="mt-4">
             <div className="flex items-center space-x-3">
+              {/* Status de salvamento - só aparece quando relevante */}
               {saveStatus && (
-                <div className={`px-3 py-1.5 rounded-md text-sm flex items-center shadow-md border ${
+                <div className={`px-3 py-1.5 rounded-md text-sm flex items-center shadow-md border transition-all duration-300 ${
                   saveStatus === 'saving' ? 'bg-[#0A3B3B] text-[#D5A253] border-[#D5A253]/20' :
                     saveStatus === 'saved' ? 'bg-green-900/30 text-green-400 border-green-800/20' :
-                      'bg-red-900/30 text-red-400 border-red-800/20'
+                      saveStatus === 'local' ? 'bg-blue-900/30 text-blue-400 border-blue-800/20' :
+                        'bg-red-900/30 text-red-400 border-red-800/20'
                 }`}>
                   {saveStatus === 'saving' && (
                     <>
@@ -513,7 +578,7 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
-                      Saving...
+                      Saving to server...
                     </>
                   )}
                   {saveStatus === 'saved' && (
@@ -521,7 +586,15 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
                       <svg className="h-3 w-3 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                         <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                       </svg>
-                      Flow saved
+                      Saved to server
+                    </>
+                  )}
+                  {saveStatus === 'local' && (
+                    <>
+                      <svg className="h-3 w-3 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                      Saved locally
                     </>
                   )}
                   {saveStatus === 'error' && (
@@ -535,6 +608,21 @@ const FlowContent: React.FC<FlowProps> = ({ flowId }) => {
                 </div>
               )}
 
+              {/* Botão de save manual - só aparece se há mudanças não salvas */}
+              {hasUnsavedChanges() && !saveStatus && (
+                <button
+                  onClick={handleManualSave}
+                  className="px-3 py-1.5 bg-[#D5A253] hover:bg-[#BF8A3D] text-[#0A3B3B] text-sm rounded-md transition-colors flex items-center shadow-md"
+                  title="Save changes to server now"
+                >
+                  <svg className="h-3 w-3 mr-1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M7.707 10.293a1 1 0 10-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 11.586V6h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2h5v5.586l-1.293-1.293zM9 4a1 1 0 012 0v2H9V4z" />
+                  </svg>
+                  Save Now
+                </button>
+              )}
+
+              {/* Versão atual */}
               {currentVersion && (
                 <div className="px-3 py-1.5 rounded-md text-sm flex items-center bg-[#0A3B3B] text-[#D5A253] border border-[#D5A253]/20 shadow-md">
                   <ClockIcon className="h-3 w-3 mr-2" />
